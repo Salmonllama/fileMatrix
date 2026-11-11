@@ -81,3 +81,16 @@ fileMatrix/
 
 The compiled APK will be at:
 `app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 📦 CI/CD & Automated GitHub Releases
+
+Automated builds and APK releases are managed by [GitHub Actions](.github/workflows/release.yml):
+
+- **Version Releases (`v*`)**: Pushing a tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) automatically builds, tests, and publishes a new GitHub Release with the APK (`fileMatrix-v1.0.0.apk`) and its SHA-256 checksum.
+- **Rolling Debug Builds (`latest-debug`)**: Every push to `main` updates the `latest-debug` pre-release so the newest build is always accessible.
+- **Manual Trigger (`workflow_dispatch`)**: Trigger a build anytime directly from the **Actions** tab on GitHub with custom tag names, draft status, and pre-release flags.
+
+Releases and APK binaries can be downloaded at:
+[https://github.com/Salmonllama/fileMatrix/releases](https://github.com/Salmonllama/fileMatrix/releases)
