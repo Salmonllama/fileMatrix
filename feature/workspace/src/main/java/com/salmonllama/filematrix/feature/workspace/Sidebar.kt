@@ -19,17 +19,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Laptop
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -41,7 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.salmonllama.filematrix.core.designsystem.components.ShortcutBadge
@@ -53,9 +53,13 @@ import com.salmonllama.filematrix.core.model.VfsUri
 @Composable
 fun Sidebar(
     roots: List<StorageRoot>,
-    selectedRootType: GooglebookRootType?,
+    activeUri: VfsUri,
+    hasAllFilesAccess: Boolean,
     onSelectRoot: (StorageRoot) -> Unit,
     onRequestMountRoot: (GooglebookRootType) -> Unit,
+    onUnmountRoot: (StorageRoot) -> Unit,
+    onRequestAllFilesAccess: () -> Unit,
+    onRefreshVolumes: () -> Unit,
     onOpenCommandPalette: () -> Unit,
     onToggleTerminal: () -> Unit,
     onOpenTransfers: () -> Unit,
@@ -98,7 +102,7 @@ fun Sidebar(
                     )
                 }
                 Spacer(modifier = Modifier.width(10.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "fileMatrix",
                         style = MaterialTheme.typography.titleMedium,
@@ -110,9 +114,20 @@ fun Sidebar(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                IconButton(
+                    onClick = onRefreshVolumes,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Storage Volumes",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Quick Search / Command Palette Bar
             Row(
@@ -146,15 +161,53 @@ fun Sidebar(
                 ShortcutBadge(shortcut = "Ctrl+K")
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            if (!hasAllFilesAccess) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFFFFB74D).copy(alpha = 0.14f))
+                        .border(
+                            DesktopDensity.BorderWidth,
+                            Color(0xFFFFB74D).copy(alpha = 0.5f),
+                            RoundedCornerShape(6.dp)
+                        )
+                        .clickable(onClick = onRequestAllFilesAccess)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LockOpen,
+                        contentDescription = null,
+                        tint = Color(0xFFFFB74D),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Unlock Full Drive Root",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFFFB74D)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Googlebook Storage Roots Section
-            Text(
-                text = "STORAGE MATRIX",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 6.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "STORAGE MATRIX",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -162,23 +215,33 @@ fun Sidebar(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Group roots or show 5 slots
                 GooglebookRootType.entries.forEach { rootType ->
-                    val mountedRoot = roots.find { it.rootType == rootType }
-                    item {
-                        RootItemCard(
-                            rootType = rootType,
-                            mountedRoot = mountedRoot,
-                            isSelected = selectedRootType == rootType,
-                            onClick = {
-                                if (mountedRoot != null) {
-                                    onSelectRoot(mountedRoot)
-                                } else {
-                                    onRequestMountRoot(rootType)
-                                }
-                            },
-                            onMountClick = { onRequestMountRoot(rootType) }
-                        )
+                    val matchingRoots = roots.filter { it.rootType == rootType }
+                    if (matchingRoots.isEmpty()) {
+                        item(key = "unmounted_${rootType.name}") {
+                            RootItemCard(
+                                rootType = rootType,
+                                mountedRoot = null,
+                                isSelected = false,
+                                onClick = { onRequestMountRoot(rootType) },
+                                onMountClick = { onRequestMountRoot(rootType) },
+                                onUnmountClick = null
+                            )
+                        }
+                    } else {
+                        items(matchingRoots, key = { it.id }) { mounted ->
+                            val isSelected = isRootActive(mounted, activeUri)
+                            RootItemCard(
+                                rootType = rootType,
+                                mountedRoot = mounted,
+                                isSelected = isSelected,
+                                onClick = { onSelectRoot(mounted) },
+                                onMountClick = { onRequestMountRoot(rootType) },
+                                onUnmountClick = if (!mounted.isAutoDiscovered) {
+                                    { onUnmountRoot(mounted) }
+                                } else null
+                            )
+                        }
                     }
                 }
             }
@@ -247,13 +310,39 @@ fun Sidebar(
     }
 }
 
+private fun isRootActive(root: StorageRoot, activeUri: VfsUri): Boolean {
+    if (root.rootType != activeUri.rootType) return false
+    return when {
+        root.baseUri.startsWith("file://") && activeUri.isFileScheme -> {
+            val basePath = root.baseUri.removePrefix("file://").trimEnd('/')
+            val curPath = activeUri.path.trimEnd('/')
+            curPath == basePath || curPath.startsWith("$basePath/")
+        }
+        root.baseUri.startsWith("sftp://") && activeUri.isSftpScheme -> {
+            root.authority == activeUri.authority
+        }
+        root.baseUri.startsWith("gdrive://") && activeUri.isGoogleDriveScheme -> true
+        else -> activeUri.rawString.startsWith(root.baseUri)
+    }
+}
+
+private fun protocolTag(root: StorageRoot): String {
+    return when {
+        root.baseUri.startsWith("file://") -> "LOCAL"
+        root.baseUri.startsWith("sftp://") -> "SFTP"
+        root.baseUri.startsWith("gdrive://") -> "DRIVE API"
+        else -> "SAF"
+    }
+}
+
 @Composable
 private fun RootItemCard(
     rootType: GooglebookRootType,
     mountedRoot: StorageRoot?,
     isSelected: Boolean,
     onClick: () -> Unit,
-    onMountClick: () -> Unit
+    onMountClick: () -> Unit,
+    onUnmountClick: (() -> Unit)?
 ) {
     val (icon, tint) = when (rootType) {
         GooglebookRootType.GOOGLEBOOK_LOCAL -> Icons.Default.Laptop to Color(0xFF58A6FF)
@@ -294,7 +383,9 @@ private fun RootItemCard(
                 Text(
                     text = mountedRoot?.displayName ?: rootType.title,
                     style = MaterialTheme.typography.titleSmall,
-                    color = if (isMounted) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isMounted) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 val totalBytes = mountedRoot?.quotaTotalBytes
                 val usedBytes = mountedRoot?.quotaUsedBytes
@@ -312,7 +403,7 @@ private fun RootItemCard(
                     )
                 } else {
                     Text(
-                        text = if (isMounted) "Mounted" else "Click to Mount",
+                        text = if (isMounted) "${protocolTag(mountedRoot!!)} • Mounted" else "Click to Connect",
                         style = MaterialTheme.typography.bodySmall,
                         fontSize = 10.sp,
                         color = if (isMounted) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurfaceVariant
@@ -324,10 +415,31 @@ private fun RootItemCard(
                 IconButton(onClick = onMountClick, modifier = Modifier.size(20.dp)) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "Mount",
+                        contentDescription = "Connect",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(14.dp)
                     )
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onMountClick, modifier = Modifier.size(20.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Mount",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                    if (onUnmountClick != null) {
+                        IconButton(onClick = onUnmountClick, modifier = Modifier.size(20.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Unmount",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
                 }
             }
         }

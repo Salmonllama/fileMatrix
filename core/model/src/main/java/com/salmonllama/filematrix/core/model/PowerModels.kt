@@ -81,3 +81,11 @@ data class Bookmark(
     val rootType: GooglebookRootType,
     val iconName: String = "folder"
 )
+
+data class GoogleDriveAccountInfo(
+    val email: String,
+    val displayName: String,
+    val quotaUsedBytes: Long? = null,
+    val quotaTotalBytes: Long? = null
+)
+

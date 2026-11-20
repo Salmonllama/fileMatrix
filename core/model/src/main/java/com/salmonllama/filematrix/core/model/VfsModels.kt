@@ -43,8 +43,33 @@ data class StorageRoot(
     val quotaUsedBytes: Long? = null,
     val quotaTotalBytes: Long? = null,
     val authority: String? = null,
-    val documentId: String? = null
-)
+    val documentId: String? = null,
+    val isAutoDiscovered: Boolean = false
+) {
+    fun toVfsUri(): VfsUri {
+        return when {
+            baseUri.startsWith("file://") -> {
+                VfsUri.fromFile(baseUri.removePrefix("file://"), rootType)
+            }
+            baseUri.startsWith("sftp://") -> {
+                VfsUri.parseSftp(baseUri, rootType)
+            }
+            baseUri.startsWith("gdrive://") -> {
+                val fileId = baseUri.removePrefix("gdrive://").substringBefore('/').ifBlank { "root" }
+                val displayPath = targetPosixPath ?: if (fileId == "root") "/My Drive" else "/$displayName"
+                VfsUri.fromGoogleDrive(fileId = fileId, displayPath = displayPath)
+            }
+            else -> {
+                VfsUri.fromContent(
+                    contentUri = baseUri,
+                    rootType = rootType,
+                    authority = authority,
+                    documentPath = documentId ?: baseUri
+                )
+            }
+        }
+    }
+}
 
 data class VfsUri(
     val rawString: String,
@@ -56,17 +81,55 @@ data class VfsUri(
     val isFileScheme: Boolean get() = scheme == "file"
     val isContentScheme: Boolean get() = scheme == "content"
     val isSftpScheme: Boolean get() = scheme == "sftp"
+    val isGoogleDriveScheme: Boolean get() = scheme == "gdrive"
+
+    fun withPath(newPath: String): VfsUri {
+        val normalized = if (newPath.startsWith("/")) newPath else "/$newPath"
+        return when {
+            isFileScheme -> fromFile(normalized, rootType)
+            isSftpScheme -> {
+                val auth = authority ?: "127.0.0.1:22"
+                val host = auth.substringBefore(':')
+                val port = auth.substringAfter(':', "22").toIntOrNull() ?: 22
+                fromSftp(host, port, normalized, rootType)
+            }
+            else -> copy(path = normalized)
+        }
+    }
+
+    fun parentUri(): VfsUri? {
+        return when {
+            isFileScheme || isSftpScheme -> {
+                val trimmed = path.trimEnd('/')
+                if (trimmed.isEmpty() || trimmed == "/") return null
+                val parent = trimmed.substringBeforeLast('/', "").ifEmpty { "/" }
+                withPath(parent)
+            }
+            else -> null
+        }
+    }
 
     companion object {
-        fun fromFile(path: String): VfsUri = VfsUri(
-            rawString = "file://$path",
-            scheme = "file",
-            authority = null,
-            path = path,
-            rootType = GooglebookRootType.GOOGLEBOOK_LOCAL
-        )
+        fun fromFile(
+            path: String,
+            rootType: GooglebookRootType = GooglebookRootType.GOOGLEBOOK_LOCAL
+        ): VfsUri {
+            val normalized = if (path.isBlank()) "/" else path
+            return VfsUri(
+                rawString = "file://$normalized",
+                scheme = "file",
+                authority = null,
+                path = normalized,
+                rootType = rootType
+            )
+        }
 
-        fun fromContent(contentUri: String, rootType: GooglebookRootType, authority: String?, documentPath: String): VfsUri = VfsUri(
+        fun fromContent(
+            contentUri: String,
+            rootType: GooglebookRootType,
+            authority: String?,
+            documentPath: String
+        ): VfsUri = VfsUri(
             rawString = contentUri,
             scheme = "content",
             authority = authority,
@@ -74,12 +137,41 @@ data class VfsUri(
             rootType = rootType
         )
 
-        fun fromSftp(host: String, port: Int, path: String, rootType: GooglebookRootType): VfsUri = VfsUri(
-            rawString = "sftp://$host:$port$path",
-            scheme = "sftp",
-            authority = "$host:$port",
-            path = path,
-            rootType = rootType
+        fun fromSftp(
+            host: String,
+            port: Int,
+            path: String,
+            rootType: GooglebookRootType
+        ): VfsUri {
+            val normalizedPath = if (path.startsWith("/")) path else "/$path"
+            return VfsUri(
+                rawString = "sftp://$host:$port$normalizedPath",
+                scheme = "sftp",
+                authority = "$host:$port",
+                path = normalizedPath,
+                rootType = rootType
+            )
+        }
+
+        fun parseSftp(rawUri: String, rootType: GooglebookRootType): VfsUri {
+            val withoutScheme = rawUri.removePrefix("sftp://")
+            val slashIndex = withoutScheme.indexOf('/')
+            val hostPort = if (slashIndex >= 0) withoutScheme.substring(0, slashIndex) else withoutScheme
+            val remotePath = if (slashIndex >= 0) withoutScheme.substring(slashIndex) else "/"
+            val host = hostPort.substringBefore(':')
+            val port = hostPort.substringAfter(':', "22").toIntOrNull() ?: 22
+            return fromSftp(host, port, remotePath, rootType)
+        }
+
+        fun fromGoogleDrive(
+            fileId: String = "root",
+            displayPath: String = "/My Drive"
+        ): VfsUri = VfsUri(
+            rawString = "gdrive://$fileId",
+            scheme = "gdrive",
+            authority = fileId,
+            path = displayPath,
+            rootType = GooglebookRootType.GOOGLE_DRIVE
         )
     }
 }

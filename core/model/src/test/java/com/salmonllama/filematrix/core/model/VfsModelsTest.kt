@@ -2,6 +2,7 @@ package com.salmonllama.filematrix.core.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -58,5 +59,65 @@ class VfsModelsTest {
             totalBytes = 1000L
         )
         assertEquals(0.5f, job.progressFraction, 0.001f)
+    }
+
+    @Test
+    fun testUriNavigationHelpersAcrossSchemes() {
+        val fileUri = VfsUri.fromFile("/storage/emulated/0/Download", GooglebookRootType.GOOGLEBOOK_LOCAL)
+        val fileParent = fileUri.parentUri()
+        assertEquals("file:///storage/emulated/0", fileParent?.rawString)
+        assertEquals("/storage/emulated/0", fileParent?.path)
+        assertNull(VfsUri.fromFile("/").parentUri())
+
+        val sftpUri = VfsUri.parseSftp("sftp://penguin.linux.test:22/home/user/code", GooglebookRootType.LINUX_VM)
+        assertTrue(sftpUri.isSftpScheme)
+        assertEquals("penguin.linux.test:22", sftpUri.authority)
+        assertEquals("/home/user/code", sftpUri.path)
+        val sftpParent = sftpUri.parentUri()
+        assertEquals("sftp://penguin.linux.test:22/home/user", sftpParent?.rawString)
+        assertEquals("/home/user", sftpParent?.path)
+
+        val gdriveUri = VfsUri.fromGoogleDrive("root", "/My Drive")
+        assertTrue(gdriveUri.isGoogleDriveScheme)
+        assertEquals("gdrive://root", gdriveUri.rawString)
+        assertEquals("root", gdriveUri.authority)
+        assertNull(gdriveUri.parentUri())
+    }
+
+    @Test
+    fun testStorageRootToVfsUri() {
+        val localUsb = StorageRoot(
+            id = "usb1",
+            rootType = GooglebookRootType.MOBILE_FILES,
+            displayName = "USB Drive",
+            baseUri = "file:///storage/ABCD-1234"
+        )
+        val usbUri = localUsb.toVfsUri()
+        assertTrue(usbUri.isFileScheme)
+        assertEquals(GooglebookRootType.MOBILE_FILES, usbUri.rootType)
+        assertEquals("/storage/ABCD-1234", usbUri.path)
+
+        val sftpRoot = StorageRoot(
+            id = "sftp1",
+            rootType = GooglebookRootType.ANTIGRAVITY,
+            displayName = "Antigravity",
+            baseUri = "sftp://127.0.0.1:2222/home/antigravity",
+            authority = "127.0.0.1:2222"
+        )
+        val sftpUri = sftpRoot.toVfsUri()
+        assertTrue(sftpUri.isSftpScheme)
+        assertEquals("/home/antigravity", sftpUri.path)
+
+        val gdriveRoot = StorageRoot(
+            id = "gd1",
+            rootType = GooglebookRootType.GOOGLE_DRIVE,
+            displayName = "Google Drive",
+            baseUri = "gdrive://root",
+            targetPosixPath = "/My Drive"
+        )
+        val gdriveUri = gdriveRoot.toVfsUri()
+        assertTrue(gdriveUri.isGoogleDriveScheme)
+        assertEquals("root", gdriveUri.authority)
+        assertEquals("/My Drive", gdriveUri.path)
     }
 }

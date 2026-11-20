@@ -30,6 +30,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
+    implementation(libs.jsch)
+    implementation(libs.androidx.security.crypto)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

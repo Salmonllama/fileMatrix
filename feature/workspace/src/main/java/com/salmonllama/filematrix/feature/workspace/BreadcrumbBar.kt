@@ -141,7 +141,9 @@ fun BreadcrumbBar(
                     .clip(RoundedCornerShape(4.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerLowest)
                     .border(DesktopDensity.BorderWidth, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
-                    .clickable { isEditingRawPath = true }
+                    .clickable(enabled = currentUri.isFileScheme || currentUri.isSftpScheme) {
+                        isEditingRawPath = true
+                    }
                     .padding(horizontal = 8.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -155,6 +157,23 @@ fun BreadcrumbBar(
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Go
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onGo = {
+                                isEditingRawPath = false
+                                if (rawPathInput.isNotBlank()) {
+                                    onNavigateToRawPath(rawPathInput.trim())
+                                }
+                            },
+                            onDone = {
+                                isEditingRawPath = false
+                                if (rawPathInput.isNotBlank()) {
+                                    onNavigateToRawPath(rawPathInput.trim())
+                                }
+                            }
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else {
@@ -171,7 +190,13 @@ fun BreadcrumbBar(
                             modifier = Modifier.size(12.dp)
                         )
 
-                        val segments = currentUri.path.split('/').filter { it.isNotBlank() }
+                        val canJumpByPath = currentUri.isFileScheme || currentUri.isSftpScheme
+                        val displayPath = if (currentUri.isContentScheme) {
+                            currentUri.path.substringAfterLast(':')
+                        } else {
+                            currentUri.path
+                        }
+                        val segments = displayPath.split('/').filter { it.isNotBlank() }
                         segments.forEachIndexed { index, seg ->
                             Text(
                                 text = seg,
@@ -179,10 +204,14 @@ fun BreadcrumbBar(
                                 color = if (index == segments.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(2.dp))
-                                    .clickable {
-                                        val target = "/" + segments.take(index + 1).joinToString("/")
-                                        onNavigateToSegment(target)
-                                    }
+                                    .then(
+                                        if (canJumpByPath) {
+                                            Modifier.clickable {
+                                                val target = "/" + segments.take(index + 1).joinToString("/")
+                                                onNavigateToSegment(target)
+                                            }
+                                        } else Modifier
+                                    )
                                     .padding(horizontal = 2.dp)
                             )
                             if (index < segments.lastIndex) {

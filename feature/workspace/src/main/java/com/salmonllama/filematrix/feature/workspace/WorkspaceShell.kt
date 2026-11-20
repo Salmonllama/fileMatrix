@@ -2,6 +2,7 @@ package com.salmonllama.filematrix.feature.workspace
 
 import android.os.Environment
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,8 +11,20 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -21,11 +34,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.salmonllama.filematrix.core.designsystem.theme.DesktopDensity
 import com.salmonllama.filematrix.core.model.GooglebookRootType
 import com.salmonllama.filematrix.core.model.StorageRoot
+import com.salmonllama.filematrix.core.model.TransferStatus
 import com.salmonllama.filematrix.core.model.VfsNode
 import com.salmonllama.filematrix.core.model.VfsUri
 import com.salmonllama.filematrix.core.terminal.TerminalDrawer
@@ -45,18 +63,30 @@ fun WorkspaceShell(
     vfs: VirtualFileSystem,
     transferManager: TransferQueueManager,
     sessionManager: TerminalSessionManager,
-    onRequestMountRoot: (GooglebookRootType) -> Unit,
+    hasAllFilesAccess: Boolean,
+    refreshSignal: Long,
+    pendingNavigateRoot: StorageRoot?,
+    onConsumedNavigateRoot: () -> Unit,
+    statusBannerMessage: String?,
+    onDismissStatusBanner: () -> Unit,
+    onRequestAllFilesAccess: () -> Unit,
+    onRequestSafPicker: (GooglebookRootType) -> Unit,
+    onLaunchOAuthUrl: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
     val roots by vfs.observeRoots().collectAsState(initial = emptyList())
     val transferJobs by transferManager.jobs.collectAsState()
 
-    // Default starting Uri (Local Download or External Storage)
+    // Default starting Uri (Primary external storage root when All Files Access granted, else Downloads)
     val defaultUri = remember {
+        val rootDir = Environment.getExternalStorageDirectory()
         val dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (dl.exists()) VfsUri.fromFile(dl.absolutePath)
-        else VfsUri.fromFile(Environment.getExternalStorageDirectory().absolutePath)
+        when {
+            vfs.hasAllFilesAccess() && rootDir.exists() -> VfsUri.fromFile(rootDir.absolutePath)
+            dl.exists() -> VfsUri.fromFile(dl.absolutePath)
+            else -> VfsUri.fromFile(rootDir.absolutePath)
+        }
     }
 
     // Left Pane Tabs
@@ -64,7 +94,7 @@ fun WorkspaceShell(
         mutableStateListOf(
             PaneTab(
                 id = "tab_left_1",
-                title = "Downloads",
+                title = defaultUri.path.substringAfterLast('/').ifEmpty { "Storage" },
                 currentUri = defaultUri
             )
         )
@@ -85,6 +115,7 @@ fun WorkspaceShell(
 
     var isDualPane by remember { mutableStateOf(false) }
     var activePaneIndex by remember { mutableStateOf(0) } // 0: Left, 1: Right
+    var dismissPermissionBanner by remember { mutableStateOf(false) }
 
     // Terminal Drawer state
     var isTerminalOpen by remember { mutableStateOf(false) }
@@ -93,6 +124,7 @@ fun WorkspaceShell(
     // Modals
     var showCommandPalette by remember { mutableStateOf(false) }
     var showTransferQueue by remember { mutableStateOf(false) }
+    var mountDialogRootType by remember { mutableStateOf<GooglebookRootType?>(null) }
     var checksumInspectNode by remember { mutableStateOf<VfsNode?>(null) }
     var batchRenameTargets by remember { mutableStateOf<List<VfsNode>?>(null) }
 
@@ -103,13 +135,48 @@ fun WorkspaceShell(
     val activeLeftTab = leftTabs.find { it.id == activeLeftTabId } ?: leftTabs.first()
     val activeRightTab = rightTabs.find { it.id == activeRightTabId } ?: rightTabs.first()
 
+    fun navigateActivePaneToRoot(root: StorageRoot) {
+        val targetUri = root.toVfsUri()
+        if (activePaneIndex == 0) {
+            val idx = leftTabs.indexOfFirst { it.id == activeLeftTabId }
+            if (idx != -1) {
+                leftTabs[idx] = leftTabs[idx].copy(
+                    currentUri = targetUri,
+                    title = root.displayName,
+                    historyBack = leftTabs[idx].historyBack + leftTabs[idx].currentUri,
+                    historyForward = emptyList(),
+                    selectedNodes = emptySet()
+                )
+            }
+        } else {
+            val idx = rightTabs.indexOfFirst { it.id == activeRightTabId }
+            if (idx != -1) {
+                rightTabs[idx] = rightTabs[idx].copy(
+                    currentUri = targetUri,
+                    title = root.displayName,
+                    historyBack = rightTabs[idx].historyBack + rightTabs[idx].currentUri,
+                    historyForward = emptyList(),
+                    selectedNodes = emptySet()
+                )
+            }
+        }
+    }
+
+    // Auto-navigate when a new root finishes mounting (OAuth callback / SAF / SFTP / Local)
+    LaunchedEffect(pendingNavigateRoot) {
+        if (pendingNavigateRoot != null) {
+            navigateActivePaneToRoot(pendingNavigateRoot)
+            onConsumedNavigateRoot()
+        }
+    }
+
     // Load Left Tab files
-    LaunchedEffect(activeLeftTab.currentUri) {
+    LaunchedEffect(activeLeftTab.currentUri, refreshSignal, hasAllFilesAccess) {
         leftFiles = vfs.listChildren(activeLeftTab.currentUri)
     }
 
     // Load Right Tab files
-    LaunchedEffect(activeRightTab.currentUri, isDualPane) {
+    LaunchedEffect(activeRightTab.currentUri, isDualPane, refreshSignal, hasAllFilesAccess) {
         if (isDualPane) {
             rightFiles = vfs.listChildren(activeRightTab.currentUri)
         }
@@ -148,10 +215,12 @@ fun WorkspaceShell(
                 if (idx != -1) rightTabs[idx] = rightTabs[idx].copy(viewMode = FileViewMode.ADAPTIVE_GRID)
             }
         },
-        PaletteAction("Mount Linux VM", "Storage") { onRequestMountRoot(GooglebookRootType.LINUX_VM) },
-        PaletteAction("Mount Antigravity Workspace", "Storage") { onRequestMountRoot(GooglebookRootType.ANTIGRAVITY) },
-        PaletteAction("Mount Google Drive", "Storage") { onRequestMountRoot(GooglebookRootType.GOOGLE_DRIVE) },
-        PaletteAction("Mount Mobile Files", "Storage") { onRequestMountRoot(GooglebookRootType.MOBILE_FILES) },
+        PaletteAction("Grant All Files Access (Full Drive Root)", "Storage") { onRequestAllFilesAccess() },
+        PaletteAction("Refresh Local & USB Volumes", "Storage") { vfs.refreshLocalVolumes() },
+        PaletteAction("Connect Linux VM (SFTP / Direct)", "Storage") { mountDialogRootType = GooglebookRootType.LINUX_VM },
+        PaletteAction("Connect Antigravity Workspace (SFTP)", "Storage") { mountDialogRootType = GooglebookRootType.ANTIGRAVITY },
+        PaletteAction("Connect Google Drive (API v3 Root)", "Storage") { mountDialogRootType = GooglebookRootType.GOOGLE_DRIVE },
+        PaletteAction("Connect Mobile / USB Storage", "Storage") { mountDialogRootType = GooglebookRootType.MOBILE_FILES },
         PaletteAction("Show File Transfer Queue", "Transfers") { showTransferQueue = true }
     )
 
@@ -160,30 +229,93 @@ fun WorkspaceShell(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        // Optional OAuth / Mount Status Banner
+        statusBannerMessage?.let { message ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .border(DesktopDensity.BorderWidth, MaterialTheme.colorScheme.outlineVariant)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFFFB74D),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onDismissStatusBanner, modifier = Modifier.size(22.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(14.dp))
+                }
+            }
+        }
+
+        // All Files Access Onboarding Banner (for direct drive root access without SAF)
+        if (!hasAllFilesAccess && !dismissPermissionBanner) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1F2A38))
+                    .border(DesktopDensity.BorderWidth, Color(0xFF58A6FF).copy(alpha = 0.4f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LockOpen,
+                    contentDescription = null,
+                    tint = Color(0xFF58A6FF),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Grant All Files Access to browse full internal storage, Downloads, SD cards & USB drive roots directly — no native file picker needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onRequestAllFilesAccess,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.height(28.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F6FEB))
+                ) {
+                    Text("Enable All Files Access", fontSize = 11.sp)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(onClick = { dismissPermissionBanner = true }, modifier = Modifier.size(24.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(14.dp))
+                }
+            }
+        }
+
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            // Sidebar with 5-root cards
+            // Sidebar with all auto-discovered and custom roots
             Sidebar(
                 roots = roots,
-                selectedRootType = activeTab.currentUri.rootType,
-                onSelectRoot = { root ->
-                    val uri = if (root.rootType == GooglebookRootType.GOOGLEBOOK_LOCAL) {
-                        VfsUri.fromFile(root.baseUri.removePrefix("file://"))
-                    } else {
-                        VfsUri.fromContent(root.baseUri, root.rootType, root.authority, root.baseUri)
-                    }
-                    if (activePaneIndex == 0) {
-                        val idx = leftTabs.indexOfFirst { it.id == activeLeftTabId }
-                        if (idx != -1) leftTabs[idx] = leftTabs[idx].copy(currentUri = uri, title = root.displayName)
-                    } else {
-                        val idx = rightTabs.indexOfFirst { it.id == activeRightTabId }
-                        if (idx != -1) rightTabs[idx] = rightTabs[idx].copy(currentUri = uri, title = root.displayName)
+                activeUri = activeTab.currentUri,
+                hasAllFilesAccess = hasAllFilesAccess,
+                onSelectRoot = { root -> navigateActivePaneToRoot(root) },
+                onRequestMountRoot = { rootType -> mountDialogRootType = rootType },
+                onUnmountRoot = { root ->
+                    coroutineScope.launch {
+                        vfs.unregisterRoot(root.id)
                     }
                 },
-                onRequestMountRoot = onRequestMountRoot,
+                onRequestAllFilesAccess = onRequestAllFilesAccess,
+                onRefreshVolumes = { vfs.refreshLocalVolumes() },
                 onOpenCommandPalette = { showCommandPalette = true },
                 onToggleTerminal = { isTerminalOpen = !isTerminalOpen },
                 onOpenTransfers = { showTransferQueue = true },
-                activeTransferCount = transferJobs.count { it.status == com.salmonllama.filematrix.core.model.TransferStatus.RUNNING }
+                activeTransferCount = transferJobs.count { it.status == TransferStatus.RUNNING }
             )
 
             // Main Dual-Pane Workspace Area
@@ -245,11 +377,13 @@ fun WorkspaceShell(
                         onNavigateUri = { newUri ->
                             val idx = leftTabs.indexOfFirst { it.id == activeLeftTabId }
                             if (idx != -1) {
-                                val name = newUri.path.substringAfterLast('/').ifEmpty { newUri.rootType.title }
+                                val name = newUri.path.trimEnd('/').substringAfterLast('/').ifEmpty { newUri.rootType.title }
                                 leftTabs[idx] = leftTabs[idx].copy(
                                     currentUri = newUri,
                                     title = name,
-                                    historyBack = leftTabs[idx].historyBack + leftTabs[idx].currentUri
+                                    historyBack = leftTabs[idx].historyBack + leftTabs[idx].currentUri,
+                                    historyForward = emptyList(),
+                                    selectedNodes = emptySet()
                                 )
                             }
                         },
@@ -259,6 +393,7 @@ fun WorkspaceShell(
                                 val prev = leftTabs[idx].historyBack.last()
                                 leftTabs[idx] = leftTabs[idx].copy(
                                     currentUri = prev,
+                                    title = prev.path.trimEnd('/').substringAfterLast('/').ifEmpty { prev.rootType.title },
                                     historyBack = leftTabs[idx].historyBack.dropLast(1),
                                     historyForward = leftTabs[idx].historyForward + leftTabs[idx].currentUri
                                 )
@@ -270,16 +405,33 @@ fun WorkspaceShell(
                                 val next = leftTabs[idx].historyForward.last()
                                 leftTabs[idx] = leftTabs[idx].copy(
                                     currentUri = next,
+                                    title = next.path.trimEnd('/').substringAfterLast('/').ifEmpty { next.rootType.title },
                                     historyForward = leftTabs[idx].historyForward.dropLast(1),
                                     historyBack = leftTabs[idx].historyBack + leftTabs[idx].currentUri
                                 )
                             }
                         },
                         onNavigateUp = {
-                            val parentPath = File(activeLeftTab.currentUri.path).parent ?: "/"
-                            val newUri = activeLeftTab.currentUri.copy(path = parentPath)
                             val idx = leftTabs.indexOfFirst { it.id == activeLeftTabId }
-                            if (idx != -1) leftTabs[idx] = leftTabs[idx].copy(currentUri = newUri)
+                            if (idx != -1) {
+                                val current = leftTabs[idx].currentUri
+                                val parent = current.parentUri()
+                                if (parent != null) {
+                                    leftTabs[idx] = leftTabs[idx].copy(
+                                        currentUri = parent,
+                                        title = parent.path.trimEnd('/').substringAfterLast('/').ifEmpty { parent.rootType.title },
+                                        historyBack = leftTabs[idx].historyBack + current
+                                    )
+                                } else if (leftTabs[idx].historyBack.isNotEmpty()) {
+                                    val prev = leftTabs[idx].historyBack.last()
+                                    leftTabs[idx] = leftTabs[idx].copy(
+                                        currentUri = prev,
+                                        title = prev.path.trimEnd('/').substringAfterLast('/').ifEmpty { prev.rootType.title },
+                                        historyBack = leftTabs[idx].historyBack.dropLast(1),
+                                        historyForward = leftTabs[idx].historyForward + current
+                                    )
+                                }
+                            }
                         },
                         onRefresh = {
                             coroutineScope.launch {
@@ -331,11 +483,13 @@ fun WorkspaceShell(
                             onNavigateUri = { newUri ->
                                 val idx = rightTabs.indexOfFirst { it.id == activeRightTabId }
                                 if (idx != -1) {
-                                    val name = newUri.path.substringAfterLast('/').ifEmpty { newUri.rootType.title }
+                                    val name = newUri.path.trimEnd('/').substringAfterLast('/').ifEmpty { newUri.rootType.title }
                                     rightTabs[idx] = rightTabs[idx].copy(
                                         currentUri = newUri,
                                         title = name,
-                                        historyBack = rightTabs[idx].historyBack + rightTabs[idx].currentUri
+                                        historyBack = rightTabs[idx].historyBack + rightTabs[idx].currentUri,
+                                        historyForward = emptyList(),
+                                        selectedNodes = emptySet()
                                     )
                                 }
                             },
@@ -345,6 +499,7 @@ fun WorkspaceShell(
                                     val prev = rightTabs[idx].historyBack.last()
                                     rightTabs[idx] = rightTabs[idx].copy(
                                         currentUri = prev,
+                                        title = prev.path.trimEnd('/').substringAfterLast('/').ifEmpty { prev.rootType.title },
                                         historyBack = rightTabs[idx].historyBack.dropLast(1),
                                         historyForward = rightTabs[idx].historyForward + rightTabs[idx].currentUri
                                     )
@@ -356,16 +511,33 @@ fun WorkspaceShell(
                                     val next = rightTabs[idx].historyForward.last()
                                     rightTabs[idx] = rightTabs[idx].copy(
                                         currentUri = next,
+                                        title = next.path.trimEnd('/').substringAfterLast('/').ifEmpty { next.rootType.title },
                                         historyForward = rightTabs[idx].historyForward.dropLast(1),
                                         historyBack = rightTabs[idx].historyBack + rightTabs[idx].currentUri
                                     )
                                 }
                             },
                             onNavigateUp = {
-                                val parentPath = File(activeRightTab.currentUri.path).parent ?: "/"
-                                val newUri = activeRightTab.currentUri.copy(path = parentPath)
                                 val idx = rightTabs.indexOfFirst { it.id == activeRightTabId }
-                                if (idx != -1) rightTabs[idx] = rightTabs[idx].copy(currentUri = newUri)
+                                if (idx != -1) {
+                                    val current = rightTabs[idx].currentUri
+                                    val parent = current.parentUri()
+                                    if (parent != null) {
+                                        rightTabs[idx] = rightTabs[idx].copy(
+                                            currentUri = parent,
+                                            title = parent.path.trimEnd('/').substringAfterLast('/').ifEmpty { parent.rootType.title },
+                                            historyBack = rightTabs[idx].historyBack + current
+                                        )
+                                    } else if (rightTabs[idx].historyBack.isNotEmpty()) {
+                                        val prev = rightTabs[idx].historyBack.last()
+                                        rightTabs[idx] = rightTabs[idx].copy(
+                                            currentUri = prev,
+                                            title = prev.path.trimEnd('/').substringAfterLast('/').ifEmpty { prev.rootType.title },
+                                            historyBack = rightTabs[idx].historyBack.dropLast(1),
+                                            historyForward = rightTabs[idx].historyForward + current
+                                        )
+                                    }
+                                }
                             },
                             onRefresh = {
                                 coroutineScope.launch {
@@ -418,6 +590,22 @@ fun WorkspaceShell(
                 onClose = { isTerminalOpen = false }
             )
         }
+    }
+
+    // Guided Storage Mount Dialog (SFTP, Direct Root, Google Drive API v3, SAF fallback)
+    mountDialogRootType?.let { targetType ->
+        StorageMountDialog(
+            rootType = targetType,
+            vfs = vfs,
+            hasAllFilesAccess = hasAllFilesAccess,
+            onRequestAllFilesAccess = onRequestAllFilesAccess,
+            onRequestSafPicker = onRequestSafPicker,
+            onLaunchOAuthUrl = onLaunchOAuthUrl,
+            onRootMounted = { mountedRoot ->
+                navigateActivePaneToRoot(mountedRoot)
+            },
+            onDismiss = { mountDialogRootType = null }
+        )
     }
 
     // Command Palette Modal

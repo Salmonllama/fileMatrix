@@ -15,6 +15,9 @@ interface PersistedRootDao {
     @Query("SELECT * FROM persisted_roots ORDER BY grantedAtEpochMs DESC")
     fun getAllRoots(): Flow<List<PersistedRootEntity>>
 
+    @Query("SELECT * FROM persisted_roots ORDER BY grantedAtEpochMs DESC")
+    suspend fun getAllRootsSync(): List<PersistedRootEntity>
+
     @Query("SELECT * FROM persisted_roots WHERE rootType = :type")
     suspend fun getRootsByType(type: GooglebookRootType): List<PersistedRootEntity>
 
@@ -44,6 +47,12 @@ interface BookmarkDao {
 interface SshProfileDao {
     @Query("SELECT * FROM ssh_profiles ORDER BY name ASC")
     fun getAllProfiles(): Flow<List<SshProfileEntity>>
+
+    @Query("SELECT * FROM ssh_profiles WHERE id = :id LIMIT 1")
+    suspend fun getProfileById(id: String): SshProfileEntity?
+
+    @Query("SELECT * FROM ssh_profiles WHERE host = :host AND port = :port LIMIT 1")
+    suspend fun getProfileByHostPort(host: String, port: Int): SshProfileEntity?
 
     @Query("SELECT * FROM ssh_profiles WHERE rootType = :type LIMIT 1")
     suspend fun getProfileForRoot(type: GooglebookRootType): SshProfileEntity?

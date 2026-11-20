@@ -6,13 +6,13 @@
 
 ## 🌟 Key Features
 
-### 1. Unified 5-Location Storage Matrix
-- **Googlebook Local**: Fast NIO access (`java.nio.file`) across `/storage/emulated/0`, Downloads, Documents, Media.
-- **Linux VM (Crostini / Virtualization)**: Seamless SAF tree integration + high-speed SSH/SFTP socket client.
-- **Antigravity**: Direct Antigravity workspace integration with live path mapping.
-- **Google Drive**: Cloud storage and virtual document streaming.
-- **Mobile Files**: Connected cross-device tethering and external storage devices.
-- **1-Click Mount Hub**: Guided onboarding cards in the sidebar with persistable SAF grants.
+### 1. Unified 5-Location Storage Matrix (Full Drive-Root Access)
+- **Googlebook Local**: Direct NIO access (`java.nio.file`) across `/storage/emulated/0`, Downloads, Documents, and ChromeOS shared mounts with `MANAGE_EXTERNAL_STORAGE` onboarding and `StorageManager` auto-discovery.
+- **Linux VM (Crostini / Virtualization)**: Native **SFTP over SSH** VFS provider (`sftp://`, password & PEM private key auth) for full `/` and `~` root access, plus direct local mount detection (`/mnt/chromeos/LinuxFiles`).
+- **Antigravity**: Direct **SFTP/SSH** and local workspace integration with live POSIX path mapping.
+- **Google Drive**: Native **Google Drive REST API v3** provider (`gdrive://`) with OAuth 2.0 PKCE sign-in and direct token support for full **My Drive** and **Shared Drives** root browsing, CRUD, upload/download, and search.
+- **Mobile Files**: Automatic `StorageManager` discovery for mounted SD cards and USB drives, plus SFTP connectivity for tethered phones and guided SAF subfolder fallback.
+- **Guided Storage Mount Hub**: In-app connection modal prioritizing direct root-capable protocols without forcing Android's native SAF file picker.
 
 ### 2. Desktop-First Browsing & Windowing
 - **Material 3 Expressive Desktop Theme**: High-density typography (JetBrains Mono / monospace for paths, sizes, hashes), custom dark surfaces (`surfaceContainerLowest` to `surfaceContainerHighest`), and pointer hover states.

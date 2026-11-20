@@ -89,12 +89,14 @@ fun PaneView(
             onNavigateUp = onNavigateUp,
             onRefresh = onRefresh,
             onNavigateToSegment = { segmentPath ->
-                val newUri = tab.currentUri.copy(path = segmentPath)
-                onNavigateUri(newUri)
+                if (tab.currentUri.isFileScheme || tab.currentUri.isSftpScheme) {
+                    onNavigateUri(tab.currentUri.withPath(segmentPath))
+                }
             },
             onNavigateToRawPath = { raw ->
-                val newUri = tab.currentUri.copy(path = raw)
-                onNavigateUri(newUri)
+                if (tab.currentUri.isFileScheme || tab.currentUri.isSftpScheme) {
+                    onNavigateUri(tab.currentUri.withPath(raw))
+                }
             },
             onChangeViewMode = onChangeViewMode,
             onToggleDualPane = onToggleDualPane
