@@ -237,7 +237,7 @@ class GoogleDriveAuthStore(context: Context) : GoogleDriveTokenProvider {
     }
 
     companion object {
-        const val DEFAULT_REDIRECT_URI = "com.salmonllama.filematrix:/oauth2redirect"
+        const val DEFAULT_REDIRECT_URI = "com.salmonllama.filematrix://oauth2redirect"
         private const val GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
         private const val GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
         private const val DRIVE_SCOPES = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"

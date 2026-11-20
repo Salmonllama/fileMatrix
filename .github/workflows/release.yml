@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag Name (e.g. v1.0.0 or latest-debug)'
+        description: 'Release Tag Name (e.g. v1.1.0 or latest-debug)'
         required: false
         default: 'latest-debug'
       prerelease:
@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -68,32 +68,64 @@ jobs:
             IS_DRAFT="false"
           fi
 
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
-          echo "draft=${IS_DRAFT}" >> $GITHUB_OUTPUT
+          SHORT_SHA="${GITHUB_SHA::7}"
+          COMMIT_MSG="$(git log -1 --pretty=%s)"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "draft=${IS_DRAFT}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
           mkdir -p dist
           APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
           APK_DEST="dist/fileMatrix-${TAG}.apk"
           cp "$APK_SRC" "$APK_DEST"
 
-          cd dist
-          sha256sum "fileMatrix-${TAG}.apk" > "fileMatrix-${TAG}.apk.sha256"
+          (
+            cd dist
+            sha256sum "fileMatrix-${TAG}.apk" > "fileMatrix-${TAG}.apk.sha256"
+          )
+
+          SHA256="$(awk '{print $1}' "dist/fileMatrix-${TAG}.apk.sha256")"
+          cat > dist/release-notes.md <<EOF
+          ### fileMatrix \`${TAG}\` (Build #${GITHUB_RUN_NUMBER} • \`${SHORT_SHA}\`)
+
+          - **Commit**: \`${SHORT_SHA}\` — ${COMMIT_MSG}
+          - **APK**: \`fileMatrix-${TAG}.apk\`
+          - **SHA-256**: \`${SHA256}\`
+
+          > **Note on upgrading from builds prior to v1.1.0**: Earlier CI builds used an ephemeral per-runner debug key. If Android reports *"App not installed"*, uninstall the older build once and install this APK — all builds going forward share a consistent debug signing key for seamless in-place upgrades.
+          EOF
+
           echo "Generated APK: $APK_DEST"
-          cat "fileMatrix-${TAG}.apk.sha256"
+          cat "dist/fileMatrix-${TAG}.apk.sha256"
 
       - name: Upload APK to Actions Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: fileMatrix-${{ steps.prep.outputs.tag }}
-          path: dist/*
+          path: |
+            dist/*.apk
+            dist/*.sha256
           retention-days: 30
+
+      - name: Refresh Rolling Tag & Delete Stale Release
+        if: steps.prep.outputs.tag == 'latest-debug'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-debug --yes || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f latest-debug HEAD
+          git push -f origin latest-debug
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.prep.outputs.tag }}
-          name: fileMatrix ${{ steps.prep.outputs.tag }}
+          name: fileMatrix ${{ steps.prep.outputs.tag }} (${{ steps.prep.outputs.short_sha }})
+          body_path: dist/release-notes.md
           draft: ${{ steps.prep.outputs.draft == 'true' }}
           prerelease: ${{ steps.prep.outputs.prerelease == 'true' }}
           generate_release_notes: true

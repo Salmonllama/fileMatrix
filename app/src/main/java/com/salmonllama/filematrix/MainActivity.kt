@@ -136,7 +136,9 @@ class MainActivity : ComponentActivity() {
 
     private fun handleOAuthRedirectIntent(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme != "com.salmonllama.filematrix" || data.path != "/oauth2redirect") return
+        val isOAuthRedirect = data.scheme == "com.salmonllama.filematrix" &&
+            (data.host == "oauth2redirect" || data.path == "/oauth2redirect")
+        if (!isOAuthRedirect) return
 
         val oauthError = data.getQueryParameter("error")
         if (!oauthError.isNullOrBlank()) {
